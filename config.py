@@ -1,0 +1,19 @@
+import os
+
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_ENV_FILE):
+    with open(_ENV_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://kb_user:kb_pass@127.0.0.1:5433/skill_registry")
+EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
+
+DEDUP_HIGH_THRESHOLD = 0.95
+DEDUP_WARN_THRESHOLD = 0.85
+SEARCH_DEFAULT_TOP_K = 10
