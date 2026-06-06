@@ -27,6 +27,8 @@ async def register(project: str, data: AgentRegisterRequest):
         if result["status"] == "rejected":
             return AgentRegisterResponse(**result)
         return AgentRegisterResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         session.close()
 
@@ -44,14 +46,21 @@ async def match(project: str, data: AgentMatchRequest):
                     agent=AgentResult(
                         id=m["agent_id"],
                         name=m["name"],
-                        description=m["description"],
+                        tech_stack=m.get("tech_stack", []),
+                        task_types=m.get("task_types", []),
+                        domains=m.get("domains", []),
+                        difficulty=m.get("difficulty"),
                         department=m["department"],
                         protocol=m.get("protocol", "http"),
                         capability_tags=m.get("capability_tags", []),
                         reliability_score=m.get("reliability_score"),
-                        similarity=m.get("relevance_score", m.get("vector_similarity")),
+                        similarity=m.get("relevance_score"),
                         created_at=m.get("created_at"),
                     ),
+                    tech_sim=m.get("tech_sim"),
+                    task_sim=m.get("task_sim"),
+                    domain_sim=m.get("domain_sim"),
+                    diff_sim=m.get("diff_sim"),
                     match_reason=m.get("match_reason", ""),
                 )
                 for m in matches
