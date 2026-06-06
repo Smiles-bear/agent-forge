@@ -70,6 +70,7 @@ class AgentRegisterRequest(BaseModel):
     tools: list[str] | None = None
     department: str = Field(default="uncategorized")
     capability_tags: list[str] | None = None
+    verification: dict | None = Field(default=None, description="验证配置: type, test_cases, steps")
 
 
 class AgentRegisterResponse(BaseModel):
@@ -111,6 +112,7 @@ class AgentDetail(BaseModel):
     tools: list[str] | None
     department: str
     capability_tags: list[str] | None
+    verification_config: dict | None = None
     reliability_score: float | None = None
     avg_latency_ms: int | None = None
     total_calls: int = 0
@@ -159,3 +161,15 @@ class AgentListResponse(BaseModel):
 class AgentDeleteResponse(BaseModel):
     status: str
     agent_id: int
+
+
+# --- Verification schemas ---
+
+class VerificationResultOut(BaseModel):
+    id: int
+    agent_id: int
+    test_index: int
+    step_scores: dict
+    overall: float
+    raw_output: str | None = None
+    created_at: datetime | None = None
