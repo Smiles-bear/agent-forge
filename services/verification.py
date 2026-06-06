@@ -84,22 +84,60 @@ async def _call_agent(endpoint: str, task: str, context: dict | None) -> str | N
 
 
 def _check_contract(output: str, required_keys: list[str]) -> float:
-    """检查输出 JSON 是否包含所有 required_keys。"""
-    try:
-        data = json.loads(output) if isinstance(output, str) else output
-    except (json.JSONDecodeError, TypeError):
-        match = re.search(r'\{[\s\S]*\}', output)
-        if match:
-            try:
-                data = json.loads(match.group())
-            except Exception:
-                return 0.0
-        else:
-            return 0.0
+    """Check if output contains all required_keys in a JSON object."""
+    data = _extract_json(output)
+    if data is None:
+        return 0.0
     if not isinstance(data, dict):
         return 0.0
     missing = [k for k in required_keys if k not in data]
     return 0.0 if missing else 1.0
+
+
+def _extract_json(output: str) -> dict | None:
+    """Try multiple strategies to extract a JSON object from output."""
+    if not output:
+        return None
+
+    # 1. Direct parse
+    try:
+        data = json.loads(output)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 2. Extract from ```json code block
+    match = re.search(r'```json\s*\n([\s\S]*?)\n```', output)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 3. Find balanced JSON object
+    start = output.find('{')
+    if start >= 0:
+        string_val = False
+        in_str = False
+        for end in range(start, len(output)):
+            ch = output[end]
+            if in_str:
+                if ch == '\\':
+                    string_val = not string_val
+                elif ch == '"' and not string_val:
+                    in_str = False
+                string_val = False
+            else:
+                if ch == '"':
+                    in_str = True
+                elif ch == '}' and end > start:
+                    try:
+                        return json.loads(output[start:end + 1])
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+    return None
 
 
 async def _run_execute(output: str, config: dict) -> float:
@@ -160,21 +198,21 @@ async def _rubric_once(output: str, task: str, dimensions: dict) -> float:
     """单次 LLM 量规评分。"""
     dim_text = "\n".join([f"- {name}: {desc}" for name, desc in dimensions.items()])
 
-    prompt = f"""你是一个严厉的代码审查评分员。你的职责是找问题，不是表扬。
+    prompt = f"""You are a strict code review grader. Your job is to find problems, not praise.
 
-任务: {task}
+Task: {task}
 
-评分维度:
+Scoring dimensions:
 {dim_text}
 
-Agent 的回复:
+Agent response:
 ---
 {output[:2000]}
 ---
 
-请对每个维度按 1-5 分打分，只返回 JSON，不要解释。
-格式: {{"正确性": 4, "完整性": 3, "可操作性": 5}}
-最低给 1 分，只给满分当你确信完美无缺。"""
+Score each dimension from 1-5. Return ONLY a JSON object, no explanation.
+Format: {{"accuracy": 4, "completeness": 3, "actionability": 5}}
+Give the minimum score of 1 unless you are certain it is perfect."""
 
     try:
         import ollama

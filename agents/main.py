@@ -97,7 +97,7 @@ async def run(req: RunRequest):
         ],
         "stream": False,
     }
-    resp = httpx.post(f"{OLLAMA_URL}/api/chat", json=body, timeout=120)
+    resp = httpx.post(f"{OLLAMA_URL}/api/chat", json=body, timeout=180)
     resp.raise_for_status()
     data = resp.json()
     return {
