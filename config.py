@@ -17,3 +17,27 @@ EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 DEDUP_HIGH_THRESHOLD = 0.95
 DEDUP_WARN_THRESHOLD = 0.85
 SEARCH_DEFAULT_TOP_K = 10
+
+# ── Agent 能力维度受控词汇表 ──
+
+TECH_TAGS = [
+    "react", "vue", "angular", "svelte",
+    "typescript", "javascript", "python", "go", "rust", "java",
+    "fastapi", "flask", "django", "express", "nextjs",
+    "postgresql", "mysql", "redis", "mongodb",
+    "docker", "kubernetes", "nginx",
+    "css", "html", "tailwind", "webpack", "vite",
+]
+
+TASK_TYPE_TAGS = [
+    "develop", "review", "debug", "refactor",
+    "test", "document", "design", "deploy",
+]
+
+DOMAIN_TAGS = [
+    "frontend", "backend", "fullstack",
+    "devops", "security", "data",
+    "mobile", "embedded", "ai_ml",
+]
+
+DIFFICULTY_LEVELS = ["easy", "medium", "hard"]
