@@ -1,6 +1,6 @@
 import json
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from store.db import SessionLocal
 from models.schemas import (
     AgentRegisterRequest, AgentRegisterResponse,
@@ -20,12 +20,25 @@ router = APIRouter(prefix="/api/v1", tags=["agent-registry"])
 
 @router.post("/{project}/agents/register", response_model=AgentRegisterResponse,
              status_code=201)
-async def register(project: str, data: AgentRegisterRequest):
+async def register(project: str, data: AgentRegisterRequest,
+                   background_tasks: BackgroundTasks):
+    agent_data = data.model_dump()
+
     session = SessionLocal()
     try:
-        result = register_agent(project, data.model_dump(), session)
+        result = register_agent(project, agent_data, session)
         if result["status"] == "rejected":
             return AgentRegisterResponse(**result)
+
+        # 异步触发验证
+        agent_id = result["agent_id"]
+        vconfig = agent_data.get("verification")
+        if vconfig and agent_id:
+            from services.verification import run_verification
+            endpoint = agent_data["endpoint"]
+            background_tasks.add_task(run_verification, agent_id, vconfig, endpoint)
+            logger.info("Verification scheduled for agent %d", agent_id)
+
         return AgentRegisterResponse(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
