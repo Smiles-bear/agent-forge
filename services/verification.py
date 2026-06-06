@@ -3,6 +3,7 @@ import logging
 import tempfile
 import subprocess
 import os
+import asyncio
 import re
 import httpx
 from sqlalchemy import text
@@ -216,10 +217,18 @@ Give the minimum score of 1 unless you are certain it is perfect."""
 
     try:
         import ollama
-        resp = ollama.chat(
-            model=RUBRIC_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            stream=False,
+
+        loop = asyncio.get_event_loop()
+        resp = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: ollama.chat(
+                    model=RUBRIC_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    stream=False,
+                ),
+            ),
+            timeout=VERIFICATION_TIMEOUT,
         )
         content = resp["message"]["content"].strip()
         if content.startswith("```"):
