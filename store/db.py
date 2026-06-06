@@ -53,11 +53,26 @@ class Agent(Base):
     department = Column(String(128), default="uncategorized")
     capability_tags = Column(Text, nullable=True)
 
+    # 能力验证
+    verification_config = Column(Text, nullable=True, comment="JSON: test_cases + steps")
+
     # 运行时指标
-    reliability_score = Column(Float, default=0.0)
+    reliability_score = Column(Float, nullable=True, default=None)
     avg_latency_ms = Column(Integer, default=0)
     total_calls = Column(Integer, default=0)
 
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class VerificationResult(Base):
+    __tablename__ = "verification_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_id = Column(Integer, nullable=False, index=True)
+    test_index = Column(Integer, nullable=False, comment="第几道测试题(0-based)")
+    step_scores = Column(Text, nullable=False, comment="JSON: {'contract': 1.0, 'rubric': 0.75}")
+    overall = Column(Float, nullable=False, comment="本题最终得分")
+    raw_output = Column(Text, nullable=True, comment="Agent 原始回复")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
