@@ -41,3 +41,9 @@ DOMAIN_TAGS = [
 ]
 
 DIFFICULTY_LEVELS = ["easy", "medium", "hard"]
+
+# ── Agent 能力验证 ──
+
+VERIFICATION_TIMEOUT = 120      # 每道测试题超时秒数
+RUBRIC_MODEL = "qwen3:8b"       # 量规评分的 LLM 模型
+RUBRIC_DOUBLE_CHECK = True       # 双评取低分
