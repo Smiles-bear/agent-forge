@@ -106,6 +106,7 @@ def register_agent(project: str, data: dict, session) -> dict:
         tools=_serialize_tags(data.get("tools")),
         department=data.get("department", "uncategorized"),
         capability_tags=_serialize_tags(data.get("capability_tags")),
+        verification_config=json.dumps(data["verification"], ensure_ascii=False) if data.get("verification") else None,
     )
     session.add(agent)
     session.commit()

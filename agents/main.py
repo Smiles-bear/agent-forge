@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import time
+import asyncio
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -23,6 +25,17 @@ DIFFICULTY = os.environ.get("AGENT_DIFFICULTY", "medium")
 PROJECT = os.environ.get("AGENT_PROJECT", "it-department")
 DEPARTMENT = os.environ.get("AGENT_DEPARTMENT", "IT")
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+ENDPOINT = os.environ.get("AGENT_ENDPOINT", f"http://{NAME.lower().replace(' ', '-')}:{PORT}/run")
+
+
+def _get_verification():
+    raw = os.environ.get("AGENT_VERIFICATION", "")
+    if raw:
+        try:
+            return {"verification": json.loads(raw)}
+        except json.JSONDecodeError:
+            logger.warning("AGENT_VERIFICATION parse failed")
+    return {}
 
 
 class RunRequest(BaseModel):
@@ -32,32 +45,42 @@ class RunRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 在后台线程中注册，避免阻塞服务器启动
+    # 服务器必须先启动，验证回调才能成功
+    asyncio.create_task(_delayed_register())
+    yield
+
+
+async def _delayed_register():
+    """延迟注册：等待服务器就绪后再向 registry 注册。"""
+    await asyncio.sleep(3)  # 等服务器完全启动
     payload = {
         "name": NAME,
         "tech_stack": TECH_STACK,
         "task_types": TASK_TYPES,
         "domains": DOMAINS,
         "difficulty": DIFFICULTY,
-        "endpoint": f"http://{NAME.lower().replace(' ', '-')}:{PORT}/run",
+        "endpoint": ENDPOINT,
         "protocol": "http",
         "department": DEPARTMENT,
+        # 可选验证配置
+        **_get_verification(),
     }
-    import time
     for attempt in range(30):
         try:
-            resp = httpx.post(
-                f"{REGISTRY_URL}/api/v1/{PROJECT}/agents/register",
-                json=payload, timeout=10,
-            )
-            logger.info("Registered to registry: %s (id=%s)", resp.json().get("status"), resp.json().get("agent_id"))
-            break
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{REGISTRY_URL}/api/v1/{PROJECT}/agents/register",
+                    json=payload, timeout=10,
+                )
+                logger.info("Registered to registry: %s (id=%s)", resp.json().get("status"), resp.json().get("agent_id"))
+                break
         except Exception as e:
             if attempt < 29:
                 logger.info("Registration attempt %d failed, retrying... (%s)", attempt + 1, e)
-                time.sleep(2)
+                await asyncio.sleep(2)
             else:
                 logger.warning("Registration failed after 30 attempts: %s", e)
-    yield
 
 
 app = FastAPI(title=NAME, lifespan=lifespan)

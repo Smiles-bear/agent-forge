@@ -18,6 +18,7 @@ services:
       - db
     environment:
       DATABASE_URL: "postgresql://kb_user:kb_pass@db:5432/skill_registry"
+      OLLAMA_HOST: "http://host.docker.internal:11434"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -35,6 +36,7 @@ services:
       AGENT_DOMAINS: "backend,frontend,fullstack"
       AGENT_DIFFICULTY: "medium"
       AGENT_SYSTEM_PROMPT: "你是一名资深代码审查专家。审查代码时关注: 1)安全漏洞(SQL注入/XSS/SSRF) 2)性能瓶颈 3)代码可维护性 4)错误处理 5)最佳实践。用中文回复,以结构化形式输出: 问题列表、严重程度、修复建议。如果代码没有问题则明确说明。"
+      AGENT_VERIFICATION: '{"type":"composite","test_cases":[{"task":"审查这段代码的安全性","context":{"code":"def login(user, pw):\\n    sql = f\"SELECT * FROM users WHERE name={user}\"\\n    db.execute(sql)"},"steps":[{"type":"contract","required_keys":["issues","summary"]},{"type":"rubric","dimensions":{"正确性":"是否准确识别了SQL注入漏洞","完整性":"是否给出了参数化查询修复方案","可操作性":"修复代码是否可以直接使用"}}]},{"task":"检查N+1性能问题","context":{"code":"def find_pairs(data):\\n    result = []\\n    for i in range(len(data)):\\n        for j in range(len(data)):\\n            result.append((data[i], data[j]))\\n    return result"},"steps":[{"type":"contract","required_keys":["issues","summary"]},{"type":"rubric","dimensions":{"正确性":"是否识别了O(n²)性能问题","完整性":"是否给出了优化方案","可操作性":"优化建议是否具体可执行"}}]},{"task":"审查没有问题的代码","context":{"code":"def add(a: int, b: int) -> int:\\n    return a + b"},"steps":[{"type":"contract","required_keys":["issues","summary"]},{"type":"rubric","dimensions":{"正确性":"是否明确说明代码没有问题","完整性":"是否避免了无根据的批评","可操作性":"结论是否清晰"}}]}]}'
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -52,6 +54,7 @@ services:
       AGENT_DOMAINS: "backend,frontend"
       AGENT_DIFFICULTY: "easy"
       AGENT_SYSTEM_PROMPT: "你是一名专业测试工程师。根据提供的函数代码生成 pytest 测试用例。覆盖: 1)正常路径 2)边界条件 3)异常处理 4)mock外部依赖。只输出可运行的 pytest 代码,使用中文注释说明每个测试的意图。"
+      AGENT_VERIFICATION: '{"type":"execute","test_cases":[{"task":"写pytest测试简单函数","context":{"code":"def add(a, b):\\n    return a + b"},"steps":[{"type":"execute","run_command":"pip install pytest -q && python -m pytest test_output.py -q --tb=short","timeout":60,"assert":{"exit_code":0},"filename":"test_output.py"}]},{"task":"写边界条件测试","context":{"code":"def divide(a, b):\\n    if b == 0:\\n        raise ValueError(\"不能除零\")\\n    return a / b"},"steps":[{"type":"execute","run_command":"pip install pytest -q && python -m pytest test_output.py -q --tb=short","timeout":60,"assert":{"exit_code":0},"filename":"test_output.py"}]},{"task":"写mock外部依赖的测试","context":{"code":"import requests\\ndef fetch_user(id):\\n    resp = requests.get(f\"https://api.example.com/users/{id}\")\\n    return resp.json()"},"steps":[{"type":"execute","run_command":"pip install pytest pytest-mock -q && python -m pytest test_output.py -q --tb=short","timeout":60,"assert":{"exit_code":0},"filename":"test_output.py"}]}]}'
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -64,11 +67,14 @@ services:
     environment:
       AGENT_NAME: "Backend Developer"
       AGENT_PORT: "8003"
+      AGENT_ENDPOINT: "http://backend-dev:8003/run"
       AGENT_TECH_STACK: "python,fastapi,postgresql,redis,docker"
       AGENT_TASK_TYPES: "develop,debug,design"
       AGENT_DOMAINS: "backend"
       AGENT_DIFFICULTY: "hard"
       AGENT_SYSTEM_PROMPT: "你是一名资深后端工程师,擅长 FastAPI、PostgreSQL、Redis。设计API时关注: 1)RESTful 设计规范 2)数据库表设计+索引 3)缓存策略 4)错误码体系 5)并发和限流。输出结构化的设计方案或可运行代码,用中文解释设计决策。"
+      AGENT_VERIFICATION: >-
+        {"type":"execute","test_cases":[{"task":"写FastAPI /health端点","context":{"code":"# 创建一个简单的 FastAPI app，包含 GET /health 端点，返回 {\"status\":\"ok\"}"},"steps":[{"type":"execute","run_command":"pip install fastapi uvicorn httpx -q && timeout 15 bash -c \"python -m uvicorn test_output:app --host 0.0.0.0 --port 8899 & sleep 3 && python -c 'import httpx; r = httpx.get(\\\"http://127.0.0.1:8899/health\\\", timeout=5); assert r.status_code == 200; assert r.json() == {\\\"status\\\":\\\"ok\\\"}'\"","timeout":30,"assert":{"exit_code":0},"filename":"test_output.py"}]}]}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -81,11 +87,13 @@ services:
     environment:
       AGENT_NAME: "Frontend Developer"
       AGENT_PORT: "8004"
+      AGENT_ENDPOINT: "http://frontend-dev:8004/run"
       AGENT_TECH_STACK: "react,typescript,css,tailwind,vite"
       AGENT_TASK_TYPES: "develop,debug,refactor"
       AGENT_DOMAINS: "frontend"
       AGENT_DIFFICULTY: "medium"
       AGENT_SYSTEM_PROMPT: "你是一名资深前端工程师,擅长 React + TypeScript + Tailwind CSS。开发时关注: 1)组件化设计 2)响应式布局 3)可访问性(a11y) 4)性能优化(lazy load/memo) 5)类型安全。输出可运行的 TSX 代码,用中文注释说明设计思路。"
+      AGENT_VERIFICATION: '{"type":"composite","test_cases":[{"task":"写React Button组件","context":{"code":"# 写一个 React Button 组件，支持 variant(primary/secondary), disabled, onClick, children"},"steps":[{"type":"contract","required_keys":["component","code"]},{"type":"rubric","dimensions":{"组件化":"组件是否可复用，props设计是否合理","可访问性":"是否支持disabled、aria-label等无障碍属性","类型安全":"是否使用了TypeScript类型定义"}}]},{"task":"写带校验的表单输入","context":{"code":"# 写一个 React 表单输入组件，包含 label、error 提示、required 标记"},"steps":[{"type":"contract","required_keys":["component","code"]},{"type":"rubric","dimensions":{"组件化":"表单组件拆分是否合理","可访问性":"label关联、error提示是否可被屏幕阅读器感知","类型安全":"表单状态管理是否类型安全"}}]}]}'
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
