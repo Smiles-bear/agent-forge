@@ -9,5 +9,85 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  registry:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: "postgresql://kb_user:kb_pass@db:5432/skill_registry"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  code-reviewer:
+    build: ./agents
+    ports:
+      - "8001:8001"
+    depends_on:
+      - registry
+    environment:
+      AGENT_NAME: "Code Reviewer"
+      AGENT_PORT: "8001"
+      AGENT_TECH_STACK: "python,typescript,go,java"
+      AGENT_TASK_TYPES: "review,refactor"
+      AGENT_DOMAINS: "backend,frontend,fullstack"
+      AGENT_DIFFICULTY: "medium"
+      AGENT_SYSTEM_PROMPT: "你是一名资深代码审查专家。审查代码时关注: 1)安全漏洞(SQL注入/XSS/SSRF) 2)性能瓶颈 3)代码可维护性 4)错误处理 5)最佳实践。用中文回复,以结构化形式输出: 问题列表、严重程度、修复建议。如果代码没有问题则明确说明。"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  test-writer:
+    build: ./agents
+    ports:
+      - "8002:8002"
+    depends_on:
+      - registry
+    environment:
+      AGENT_NAME: "Test Writer"
+      AGENT_PORT: "8002"
+      AGENT_TECH_STACK: "python,fastapi,flask,typescript"
+      AGENT_TASK_TYPES: "test"
+      AGENT_DOMAINS: "backend,frontend"
+      AGENT_DIFFICULTY: "easy"
+      AGENT_SYSTEM_PROMPT: "你是一名专业测试工程师。根据提供的函数代码生成 pytest 测试用例。覆盖: 1)正常路径 2)边界条件 3)异常处理 4)mock外部依赖。只输出可运行的 pytest 代码,使用中文注释说明每个测试的意图。"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  backend-dev:
+    build: ./agents
+    ports:
+      - "8003:8003"
+    depends_on:
+      - registry
+    environment:
+      AGENT_NAME: "Backend Developer"
+      AGENT_PORT: "8003"
+      AGENT_TECH_STACK: "python,fastapi,postgresql,redis,docker"
+      AGENT_TASK_TYPES: "develop,debug,design"
+      AGENT_DOMAINS: "backend"
+      AGENT_DIFFICULTY: "hard"
+      AGENT_SYSTEM_PROMPT: "你是一名资深后端工程师,擅长 FastAPI、PostgreSQL、Redis。设计API时关注: 1)RESTful 设计规范 2)数据库表设计+索引 3)缓存策略 4)错误码体系 5)并发和限流。输出结构化的设计方案或可运行代码,用中文解释设计决策。"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend-dev:
+    build: ./agents
+    ports:
+      - "8004:8004"
+    depends_on:
+      - registry
+    environment:
+      AGENT_NAME: "Frontend Developer"
+      AGENT_PORT: "8004"
+      AGENT_TECH_STACK: "react,typescript,css,tailwind,vite"
+      AGENT_TASK_TYPES: "develop,debug,refactor"
+      AGENT_DOMAINS: "frontend"
+      AGENT_DIFFICULTY: "medium"
+      AGENT_SYSTEM_PROMPT: "你是一名资深前端工程师,擅长 React + TypeScript + Tailwind CSS。开发时关注: 1)组件化设计 2)响应式布局 3)可访问性(a11y) 4)性能优化(lazy load/memo) 5)类型安全。输出可运行的 TSX 代码,用中文注释说明设计思路。"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   pgdata:
