@@ -313,6 +313,7 @@ def get_agent(agent_id: int, session) -> dict | None:
         "task_types": a.task_types or [],
         "domains": a.domains or [],
         "difficulty": a.difficulty,
+        "verification_config": json.loads(a.verification_config) if a.verification_config else None,
         "endpoint": a.endpoint,
         "protocol": a.protocol,
         "input_schema": json.loads(a.input_schema) if a.input_schema else None,
