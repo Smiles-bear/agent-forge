@@ -4,7 +4,10 @@ import time
 from sqlalchemy import text
 from store.db import SessionLocal, Agent
 from store.vector_store import VectorStore
-from config import DEDUP_HIGH_THRESHOLD, SEARCH_DEFAULT_TOP_K
+from config import (
+    DEDUP_HIGH_THRESHOLD, SEARCH_DEFAULT_TOP_K,
+    TECH_TAGS, TASK_TYPE_TAGS, DOMAIN_TAGS, DIFFICULTY_LEVELS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,32 +25,80 @@ def _deserialize_tags(raw: str | None) -> list[str]:
         return []
 
 
+def _validate_tags(tech_stack: list[str], task_types: list[str],
+                   domains: list[str], difficulty: str):
+    """校验所有标签在受控词汇表内，不在则 raise ValueError。"""
+    errors = []
+    for tag in tech_stack:
+        if tag not in TECH_TAGS:
+            errors.append(f"tech_stack '{tag}' not in allowed values")
+    for tag in task_types:
+        if tag not in TASK_TYPE_TAGS:
+            errors.append(f"task_types '{tag}' not in allowed values")
+    for tag in domains:
+        if tag not in DOMAIN_TAGS:
+            errors.append(f"domains '{tag}' not in allowed values")
+    if difficulty not in DIFFICULTY_LEVELS:
+        errors.append(f"difficulty '{difficulty}' not in allowed values")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 # ── Register ────────────────────────────────────────────
 
 def register_agent(project: str, data: dict, session) -> dict:
+    _validate_tags(
+        data["tech_stack"], data["task_types"],
+        data["domains"], data["difficulty"],
+    )
+
     vs = VectorStore()
-    emb = vs.encode([data["description"]])[0]
 
-    # 去重检查：同 project 内有没有能力高度相似的 Agent
-    results = vs.cosine_search(emb, project, top_k=1, session=session, model="agents")
-    closest, distance = results[0] if results else (None, None)
-    sim = round(1.0 - (distance / 2.0), 4) if distance else None
+    # 四个维度各自 encode
+    tech_text = ", ".join(data["tech_stack"])
+    task_text = ", ".join(data["task_types"])
+    domain_text = ", ".join(data["domains"])
+    diff_text = data["difficulty"]
 
-    if closest and sim and sim > DEDUP_HIGH_THRESHOLD:
+    texts = [tech_text, task_text, domain_text, diff_text]
+    embeddings = vs.encode(texts)
+    tech_emb, task_emb, domain_emb, diff_emb = embeddings
+
+    # 去重：四维各搜最相似 Agent，取平均相似度
+    sims = []
+    closest_agent = None
+    for dim_name, emb in [("tech", tech_emb), ("task", task_emb),
+                           ("domain", domain_emb), ("difficulty", diff_emb)]:
+        results = vs.cosine_search(emb, project, top_k=1, session=session,
+                                   model="agents", dim=dim_name)
+        if results:
+            agent, dist = results[0]
+            sims.append(round(1.0 - (dist / 2.0), 4))
+            closest_agent = agent
+
+    avg_sim = round(sum(sims) / len(sims), 4) if sims else 0
+
+    if avg_sim > DEDUP_HIGH_THRESHOLD:
         return {
             "status": "rejected",
             "agent_id": None,
             "name": data["name"],
-            "similarity": sim,
-            "closest_agent": closest.name,
-            "message": f"Agent too similar to '{closest.name}' ({sim:.1%}). Register rejected.",
+            "similarity": avg_sim,
+            "closest_agent": closest_agent.name if closest_agent else None,
+            "message": f"Agent too similar to '{closest_agent.name}' ({avg_sim:.1%}). Register rejected.",
         }
 
     agent = Agent(
         project=project,
         name=data["name"],
-        description=data["description"],
-        embedding=emb,
+        tech_stack=data["tech_stack"],
+        task_types=data["task_types"],
+        domains=data["domains"],
+        difficulty=data["difficulty"],
+        tech_emb=tech_emb,
+        task_emb=task_emb,
+        domain_emb=domain_emb,
+        difficulty_emb=diff_emb,
         endpoint=data["endpoint"],
         protocol=data.get("protocol", "http"),
         input_schema=json.dumps(data.get("input_schema"), ensure_ascii=False) if data.get("input_schema") else None,
@@ -64,8 +115,8 @@ def register_agent(project: str, data: dict, session) -> dict:
         "status": "created",
         "agent_id": agent.id,
         "name": agent.name,
-        "similarity": sim,
-        "closest_agent": closest.name if closest else None,
+        "similarity": avg_sim if avg_sim else None,
+        "closest_agent": closest_agent.name if closest_agent else None,
         "message": "Agent registered successfully.",
     }
 
@@ -75,22 +126,12 @@ def register_agent(project: str, data: dict, session) -> dict:
 def match_agent(task: str, project: str, top_k: int, session) -> list[dict]:
     vs = VectorStore()
     task_emb = vs.encode([task])[0]
-    results = vs.cosine_search(task_emb, project, top_k=top_k, session=session, model="agents")
 
-    if not results:
+    # 四维并行搜索，去重候选池
+    candidates = vs.cosine_search_multi_dim(task_emb, project, top_k, session)
+
+    if not candidates:
         return []
-
-    candidates = []
-    for agent, distance in results:
-        sim = round(1.0 - (distance / 2.0), 4)
-        candidates.append({
-            "agent_id": agent.id,
-            "name": agent.name,
-            "description": agent.description,
-            "department": agent.department,
-            "capability_tags": _deserialize_tags(agent.capability_tags),
-            "vector_similarity": sim,
-        })
 
     # LLM 二次排序
     reranked = _llm_rerank(task, candidates)
@@ -98,15 +139,26 @@ def match_agent(task: str, project: str, top_k: int, session) -> list[dict]:
 
 
 def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
-    """用本地 Ollama 对候选 Agent 做二次排序"""
     import ollama
 
     candidate_text = ""
     for i, c in enumerate(candidates):
-        tags = ", ".join(c.get("capability_tags", [])) or "无"
+        agent = c["agent"]
+        tags = ", ".join(_deserialize_tags(agent.capability_tags)) or "无"
+        tech_str = ", ".join(agent.tech_stack or [])
+        task_str = ", ".join(agent.task_types or [])
+        domain_str = ", ".join(agent.domains or [])
+
         candidate_text += (
-            f"[{i}] {c['name']} ({c['department']})\n"
-            f"    能力描述: {c['description']}\n"
+            f"[{i}] {agent.name} ({agent.department})\n"
+            f"    技术栈: {tech_str}\n"
+            f"    任务类型: {task_str}\n"
+            f"    领域: {domain_str}\n"
+            f"    难度: {agent.difficulty}\n"
+            f"    技术栈相似度: {c.get('tech_sim', 'N/A')}\n"
+            f"    任务类型相似度: {c.get('task_sim', 'N/A')}\n"
+            f"    领域相似度: {c.get('domain_sim', 'N/A')}\n"
+            f"    难度匹配度: {c.get('diff_sim', 'N/A')}\n"
             f"    标签: {tags}\n\n"
         )
 
@@ -114,13 +166,13 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
 
 任务: {task}
 
-候选 Agent:
+候选 Agent（含四维相似度分数）:
 {candidate_text}
 
 按适合度从高到低排列所有候选，返回 JSON 数组。每个元素: candidate_index(候选编号), relevance_score(0-1), reason(一句话理由)。
 只返回 JSON，不要其他内容。
 
-示例: [{{"candidate_index": 0, "relevance_score": 0.92, "reason": "该Agent最擅长此任务"}}]"""
+示例: [{{"candidate_index": 0, "relevance_score": 0.92, "reason": "该Agent的技术栈和任务类型最匹配"}}]"""
 
     try:
         resp = ollama.chat(
@@ -129,7 +181,6 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
             stream=False,
         )
         content = resp["message"]["content"].strip()
-        # 去掉可能的 markdown 包裹
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:]) if len(lines) > 1 else content
@@ -139,15 +190,25 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
 
         rankings = json.loads(content)
 
-        # 用 candidate_index 映射回实际的 agent_id
         merged = []
         for r in rankings:
             idx = r.get("candidate_index", -1)
             if 0 <= idx < len(candidates):
                 c = candidates[idx]
                 merged.append({
-                    **c,
-                    "relevance_score": r.get("relevance_score", c["vector_similarity"]),
+                    "agent_id": c["agent"].id,
+                    "name": c["agent"].name,
+                    "tech_stack": c["agent"].tech_stack or [],
+                    "task_types": c["agent"].task_types or [],
+                    "domains": c["agent"].domains or [],
+                    "difficulty": c["agent"].difficulty,
+                    "department": c["agent"].department,
+                    "capability_tags": _deserialize_tags(c["agent"].capability_tags),
+                    "tech_sim": c.get("tech_sim"),
+                    "task_sim": c.get("task_sim"),
+                    "domain_sim": c.get("domain_sim"),
+                    "diff_sim": c.get("diff_sim"),
+                    "relevance_score": r.get("relevance_score", 0.5),
                     "match_reason": r.get("reason", ""),
                 })
         if merged:
@@ -155,12 +216,30 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
     except Exception as e:
         logger.warning("LLM rerank failed: %s, falling back to vector scores", e)
 
-    # fallback: 直接用向量结果
-    return [
-        {**c, "relevance_score": c["vector_similarity"],
-         "match_reason": "向量匹配"}
-        for c in candidates
-    ]
+    # fallback: 用各维平均相似度排序
+    fallback = []
+    for c in candidates:
+        sims = [v for v in [c.get("tech_sim"), c.get("task_sim"),
+                            c.get("domain_sim"), c.get("diff_sim")] if v is not None]
+        avg = sum(sims) / len(sims) if sims else 0
+        fallback.append({
+            "agent_id": c["agent"].id,
+            "name": c["agent"].name,
+            "tech_stack": c["agent"].tech_stack or [],
+            "task_types": c["agent"].task_types or [],
+            "domains": c["agent"].domains or [],
+            "difficulty": c["agent"].difficulty,
+            "department": c["agent"].department,
+            "capability_tags": _deserialize_tags(c["agent"].capability_tags),
+            "tech_sim": c.get("tech_sim"),
+            "task_sim": c.get("task_sim"),
+            "domain_sim": c.get("domain_sim"),
+            "diff_sim": c.get("diff_sim"),
+            "relevance_score": round(avg, 4),
+            "match_reason": "向量匹配（LLM fallback）",
+        })
+    fallback.sort(key=lambda x: x["relevance_score"], reverse=True)
+    return fallback
 
 
 # ── Execute ─────────────────────────────────────────────
@@ -181,7 +260,6 @@ def execute_agent(agent_id: int, task: str, context: dict | None, session) -> di
 
     latency = int((time.time() - start) * 1000)
 
-    # 更新指标
     agent.total_calls = (agent.total_calls or 0) + 1
     agent.avg_latency_ms = int(
         (agent.avg_latency_ms * (agent.total_calls - 1) + latency) / agent.total_calls
@@ -213,11 +291,6 @@ def _execute_http(agent: Agent, task: str, context: dict | None) -> str:
         return f"Error calling {agent.name}: {e}"
 
 
-def _execute_mcp(agent: Agent, task: str, context: dict | None) -> str:
-    # MCP 调用待实现
-    return f"[MCP] Agent {agent.name} called with task: {task}"
-
-
 # ── CRUD ────────────────────────────────────────────────
 
 def list_agents(project: str, department: str | None, session) -> list[dict]:
@@ -236,7 +309,10 @@ def get_agent(agent_id: int, session) -> dict | None:
         "id": a.id,
         "project": a.project,
         "name": a.name,
-        "description": a.description,
+        "tech_stack": a.tech_stack or [],
+        "task_types": a.task_types or [],
+        "domains": a.domains or [],
+        "difficulty": a.difficulty,
         "endpoint": a.endpoint,
         "protocol": a.protocol,
         "input_schema": json.loads(a.input_schema) if a.input_schema else None,
@@ -275,7 +351,10 @@ def _agent_to_result(a: Agent) -> dict:
     return {
         "id": a.id,
         "name": a.name,
-        "description": a.description,
+        "tech_stack": a.tech_stack or [],
+        "task_types": a.task_types or [],
+        "domains": a.domains or [],
+        "difficulty": a.difficulty,
         "department": a.department,
         "protocol": a.protocol,
         "capability_tags": _deserialize_tags(a.capability_tags),
