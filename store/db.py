@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, ARRAY
 from sqlalchemy.orm import sessionmaker, declarative_base
 from pgvector.sqlalchemy import Vector
 from config import DATABASE_URL
@@ -29,8 +29,18 @@ class Agent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     project = Column(String(128), nullable=False, index=True)
     name = Column(String(256), nullable=False)
-    description = Column(Text, nullable=False)
-    embedding = Column(Vector(512), nullable=False)
+
+    # 四维能力标签
+    tech_stack = Column(ARRAY(String), nullable=False, default=list)
+    task_types = Column(ARRAY(String), nullable=False, default=list)
+    domains = Column(ARRAY(String), nullable=False, default=list)
+    difficulty = Column(String(32), default="medium")
+
+    # 四维能力向量
+    tech_emb = Column(Vector(512), nullable=False)
+    task_emb = Column(Vector(512), nullable=False)
+    domain_emb = Column(Vector(512), nullable=False)
+    difficulty_emb = Column(Vector(512), nullable=False)
 
     # 可执行信息
     endpoint = Column(String(512), nullable=False)
