@@ -55,17 +55,20 @@ class HealthResponse(BaseModel):
     embedding_model: str
 
 
-# --- Agent schemas ---
+# --- Agent schemas (四维能力向量) ---
 
 class AgentRegisterRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
-    description: str = Field(..., min_length=1, description="能力描述，用于 embedding 和匹配")
-    endpoint: str = Field(..., description="Agent 服务的调用地址")
+    tech_stack: list[str] = Field(..., min_length=1, description="技术栈，从受控词汇表选")
+    task_types: list[str] = Field(..., min_length=1, description="任务类型，从受控词汇表选")
+    domains: list[str] = Field(..., min_length=1, description="领域，从受控词汇表选")
+    difficulty: str = Field(default="medium", description="难度: easy/medium/hard")
+    endpoint: str = Field(..., description="Agent 调用地址")
     protocol: str = Field(default="http", description="http | mcp | grpc")
     input_schema: dict | None = None
     output_schema: dict | None = None
     tools: list[str] | None = None
-    department: str = Field(default="uncategorized", description="所属部门")
+    department: str = Field(default="uncategorized")
     capability_tags: list[str] | None = None
 
 
@@ -81,7 +84,10 @@ class AgentRegisterResponse(BaseModel):
 class AgentResult(BaseModel):
     id: int
     name: str
-    description: str
+    tech_stack: list[str] | None = None
+    task_types: list[str] | None = None
+    domains: list[str] | None = None
+    difficulty: str | None = None
     department: str
     protocol: str
     capability_tags: list[str] | None = None
@@ -94,7 +100,10 @@ class AgentDetail(BaseModel):
     id: int
     project: str
     name: str
-    description: str
+    tech_stack: list[str] | None = None
+    task_types: list[str] | None = None
+    domains: list[str] | None = None
+    difficulty: str | None = None
     endpoint: str
     protocol: str
     input_schema: dict | None
@@ -102,19 +111,23 @@ class AgentDetail(BaseModel):
     tools: list[str] | None
     department: str
     capability_tags: list[str] | None
-    reliability_score: float | None
-    avg_latency_ms: int | None
-    total_calls: int
-    created_at: datetime | None
+    reliability_score: float | None = None
+    avg_latency_ms: int | None = None
+    total_calls: int = 0
+    created_at: datetime | None = None
 
 
 class AgentMatchRequest(BaseModel):
-    task: str = Field(..., min_length=1, description="用户的任务描述")
+    task: str = Field(..., min_length=1, description="用户任务描述")
     top_k: int = Field(default=3)
 
 
 class AgentMatchResult(BaseModel):
     agent: AgentResult
+    tech_sim: float | None = None
+    task_sim: float | None = None
+    domain_sim: float | None = None
+    diff_sim: float | None = None
     match_reason: str
 
 
@@ -125,8 +138,8 @@ class AgentMatchResponse(BaseModel):
 
 
 class AgentExecuteRequest(BaseModel):
-    task: str = Field(..., description="给这个 Agent 的任务")
-    context: dict | None = Field(default=None, description="额外的上下文参数")
+    task: str = Field(..., description="给 Agent 的任务")
+    context: dict | None = Field(default=None)
 
 
 class AgentExecuteResponse(BaseModel):
