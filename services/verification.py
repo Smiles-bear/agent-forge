@@ -264,3 +264,69 @@ def _save_result(session, agent_id: int, test_index: int,
     )
     session.add(vr)
     session.commit()
+
+
+def get_verification_status(agent_id: int) -> dict | None:
+    """Query verification progress and results for an agent."""
+    session = SessionLocal()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            return None
+
+        results = (
+            session.query(VerificationResult)
+            .filter(VerificationResult.agent_id == agent_id)
+            .order_by(VerificationResult.test_index)
+            .all()
+        )
+
+        # Parse total_tests from verification_config
+        total_tests = 0
+        if agent.verification_config:
+            try:
+                vconfig = json.loads(agent.verification_config) if isinstance(agent.verification_config, str) else agent.verification_config
+                total_tests = len(vconfig.get("test_cases", []))
+            except Exception:
+                pass
+
+        completed = len(results)
+        if agent.reliability_score is not None and completed >= total_tests and total_tests > 0:
+            status = "completed"
+        elif completed > 0:
+            status = "in_progress"
+        else:
+            status = "pending"
+
+        return {
+            "agent_id": agent_id,
+            "reliability_score": agent.reliability_score,
+            "total_tests": total_tests,
+            "completed_tests": completed,
+            "status": status,
+            "results": [
+                {
+                    "test_index": v.test_index,
+                    "overall": v.overall,
+                    "steps": json.loads(v.step_scores) if isinstance(v.step_scores, str) else v.step_scores,
+                }
+                for v in results
+            ],
+        }
+    finally:
+        session.close()
+
+
+def clear_verification_results(agent_id: int):
+    """Clear old verification results and reset reliability_score for an agent."""
+    session = SessionLocal()
+    try:
+        session.query(VerificationResult).filter(
+            VerificationResult.agent_id == agent_id
+        ).delete()
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if agent:
+            agent.reliability_score = None
+        session.commit()
+    finally:
+        session.close()
