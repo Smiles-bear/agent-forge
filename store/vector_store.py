@@ -59,6 +59,7 @@ class VectorStore:
                 Agent,
                 col.cosine_distance(query_embedding).label("distance")
             ).filter(Agent.project == project) \
+             .filter(Agent.reliability_score.isnot(None)) \
              .order_by("distance").limit(top_k).all()
 
             for agent, dist in rows:
