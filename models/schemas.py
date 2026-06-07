@@ -173,3 +173,30 @@ class VerificationResultOut(BaseModel):
     overall: float
     raw_output: str | None = None
     created_at: datetime | None = None
+
+
+# --- Verification status schemas ---
+
+class VerifyRequest(BaseModel):
+    test_cases: list[dict] | None = Field(default=None, description="Optional: override existing test cases")
+
+
+class VerifyResponse(BaseModel):
+    status: str
+    agent_id: int
+    message: str
+
+
+class VerificationStepResult(BaseModel):
+    test_index: int
+    overall: float
+    steps: dict
+
+
+class VerificationStatusResponse(BaseModel):
+    agent_id: int
+    reliability_score: float | None
+    total_tests: int
+    completed_tests: int
+    status: str  # pending | in_progress | completed
+    results: list[VerificationStepResult]
