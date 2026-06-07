@@ -24,9 +24,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Skill Registry",
-    description="AI Skill management with vector-based semantic search and deduplication",
-    version="1.0.0",
+    title="AgentForge",
+    description="Multi-agent platform with 4-dim capability matching, Docker deployment, and automated verification",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -37,7 +37,7 @@ app.include_router(agent_router)
 @app.get("/")
 async def root():
     return {
-        "service": "Skill & Agent Registry",
+        "service": "AgentForge",
         "version": "2.0.0",
         "endpoints": {
             "skills": {

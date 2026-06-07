@@ -1,152 +1,95 @@
-# Skill Registry
+# AgentForge
 
-AI Skill 注册平台——上传 SKILL.md → 向量去重检查 → 语义搜索。按 project 隔离，每个项目独立的向量空间。
+Multi-agent platform — register, match, execute, and verify AI agents.
 
-## 为什么需要这个
+## What It Does
 
-写 Claude Code Skill 的人越来越多，时间长了会忘记写过什么、也容易写重复的 Skill。Skill Registry 是一个 **Skill 图书馆**——上传、搜索、查重，按项目分类管理。
+```
+Register → 4-Dim Capability Vector → Match → Execute → Verify → Reliability Score
+```
 
-## 快速开始
+- **Register**: Agents declare capabilities across 4 dimensions (tech_stack, task_types, domains, difficulty)
+- **Match**: Vector search across 4 dimensions + LLM rerank
+- **Execute**: HTTP forward to agent endpoints
+- **Verify**: Automated testing (contract check / code execution / LLM rubric)
+- **Skill Library**: Upload SKILL.md → dedup → semantic search
+
+## Architecture
+
+```
+docker-compose (6 services)
+├── db              (5433) — PostgreSQL + pgvector
+├── registry        (8000) — FastAPI — core platform
+├── code-reviewer   (8001) — Security & quality reviews
+├── test-writer     (8002) — Pytest generation
+├── backend-dev     (8003) — API & database design
+└── frontend-dev    (8004) — React component development
+```
+
+## Quick Start
 
 ```bash
-# 1. 启动数据库
-docker compose up -d
+# Prerequisites: Docker + Ollama running on host
+docker compose up -d --build
 
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 启动服务
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-
-# 4. 验证
-curl http://localhost:8000/
+# Agents auto-register and verification runs automatically
+# Check results after ~3 min
+curl http://localhost:8000/api/v1/it-department/agents
 ```
 
-## API 端点
+## API Endpoints
 
-### 上传 Skill
+### Agent Management
 
-```bash
-curl -X POST http://localhost:8000/api/v1/my-project/skills/upload \
-  -H "Content-Type: text/plain" \
-  -d '---
-name: react-component
-description: 创建 React 组件及其单元测试
-version: "1.0.0"
----
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/{project}/agents/register` | Register agent with 4-dim capability tags |
+| POST | `/api/v1/{project}/agents/match` | Match task to best agent |
+| POST | `/api/v1/{project}/agents/{id}/execute` | Execute task via agent |
+| GET | `/api/v1/{project}/agents` | List all agents |
+| GET | `/api/v1/{project}/agents/{id}` | Agent detail |
+| DELETE | `/api/v1/{project}/agents/{id}` | Remove agent |
+| GET | `/api/v1/{project}/departments` | Department summary |
+| POST | `/api/v1/{project}/agents/{id}/verify` | Re-verify agent |
+| GET | `/api/v1/{project}/agents/{id}/verification` | Verification status & results |
 
-# React Component Skill
+### Skill Management
 
-详细的 skill 内容...
-'
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/{project}/skills/upload` | Upload SKILL.md |
+| GET | `/api/v1/{project}/skills/search?q=` | Semantic search |
+| GET | `/api/v1/{project}/skills` | List skills |
+| GET | `/api/v1/{project}/skills/{id}` | Skill detail |
+| DELETE | `/api/v1/{project}/skills/{id}` | Delete skill |
 
-返回三种状态：
+## Verification System
 
-| 相似度 | 状态 | 行为 |
-|--------|------|------|
-| > 0.95 | `rejected` | 拒绝上传，返回最相似的 skill 名称 |
-| 0.85 ~ 0.95 | `created_with_warning` | 入库但提醒可能冗余 |
-| < 0.85 | `created` | 正常入库 |
+Three scoring methods:
 
-### 搜索 Skill
+| Type | How | Best For |
+|------|-----|----------|
+| `contract` | Validates JSON output has required keys | Any structured output |
+| `execute` | Runs code in subprocess, checks exit code | Test Writer, Backend Dev |
+| `rubric` | LLM scores output against dimension criteria | Code Reviewer, Frontend Dev |
 
-```bash
-curl "http://localhost:8000/api/v1/my-project/skills/search?q=react组件&top_k=5"
-```
+Each agent runs 3 test cases at registration. Score = min(step scores) averaged across tests. Updated as `reliability_score` on the agent.
 
-### 查看列表
+## Tech Stack
 
-```bash
-curl http://localhost:8000/api/v1/my-project/skills
-```
+| Layer | Tech |
+|-------|------|
+| Framework | FastAPI + Pydantic v2 |
+| Database | PostgreSQL + pgvector |
+| Embedding | BAAI/bge-small-zh-v1.5 (512-dim) |
+| LLM | Ollama (qwen3:8b) |
+| Agents | Docker FastAPI services, env-var driven |
+| Verification | contract / execute (subprocess) / rubric (LLM) |
 
-### 查看详情
+## Business Risks
 
-```bash
-curl http://localhost:8000/api/v1/my-project/skills/1
-```
+See [docs/business-risks.md](docs/business-risks.md) for 27 identified risks (P0/P1/P2).
 
-### 删除 Skill
+## License
 
-```bash
-curl -X DELETE http://localhost:8000/api/v1/my-project/skills/1
-```
-
-### 健康检查
-
-```bash
-# 全局统计
-curl http://localhost:8000/api/v1/health
-
-# 项目统计
-curl http://localhost:8000/api/v1/my-project/health
-```
-
-## 完整端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/v1/{project}/skills/upload` | 上传 SKILL.md（text/plain） |
-| GET | `/api/v1/{project}/skills/search?q=&top_k=` | 语义搜索 |
-| GET | `/api/v1/{project}/skills` | 技能列表 |
-| GET | `/api/v1/{project}/skills/{id}` | 技能详情 |
-| DELETE | `/api/v1/{project}/skills/{id}` | 删除技能 |
-| GET | `/api/v1/{project}/health` | 项目统计 |
-| GET | `/api/v1/health` | 全局统计 |
-
-## 架构
-
-```
-POST /api/v1/{project}/skills/upload
-  → services/parser.py        解析 YAML frontmatter
-  → store/vector_store.py     encode description (512-dim)
-  → store/db.py               pgvector cosine_distance 去重检查
-  → services/skill_service.py 通过/警告/拒绝 三态返回
-
-GET /api/v1/{project}/skills/search?q=
-  → vector_store.encode(query)
-  → pgvector cosine_distance TOP-K
-  → 返回结果 + 相似度分数
-```
-
-## 技术栈
-
-| 层 | 技术 |
-|---|------|
-| 框架 | FastAPI + Pydantic v2 |
-| 数据库 | PostgreSQL 16 + pgvector |
-| Embedding | BAAI/bge-small-zh-v1.5 (512 维, 单例模式) |
-| 部署 | Docker Compose |
-
-## 项目结构
-
-```
-skill-registry/
-├── main.py                  # FastAPI 入口
-├── config.py                # 配置（DB URL / 阈值 / 模型）
-├── docker-compose.yml       # PostgreSQL + pgvector
-├── routers/api.py           # 7 个端点
-├── models/schemas.py        # Pydantic 模型
-├── store/
-│   ├── db.py                # SQLAlchemy ORM + 自动建表
-│   └── vector_store.py      # Embedding + 余弦搜索
-└── services/
-    ├── parser.py             # SKILL.md YAML 解析
-    └── skill_service.py      # 上传/搜索/去重 业务逻辑
-```
-
-## 配置
-
-通过 `.env` 文件或环境变量：
-
-```bash
-DATABASE_URL=postgresql://kb_user:kb_pass@127.0.0.1:5433/skill_registry
-```
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `DEDUP_HIGH_THRESHOLD` | 0.95 | 超过此值拒绝上传 |
-| `DEDUP_WARN_THRESHOLD` | 0.85 | 超过此值警告 |
-| `SEARCH_DEFAULT_TOP_K` | 10 | 默认返回条数 |
-| `EMBEDDING_MODEL` | BAAI/bge-small-zh-v1.5 | 向量模型 |
+MIT
