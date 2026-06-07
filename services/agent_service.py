@@ -112,8 +112,8 @@ def register_agent(project: str, data: dict, session) -> dict:
     session.commit()
     session.refresh(agent)
 
-    # 检查 endpoint 连通性
-    endpoint_ok = _ping_endpoint(data["endpoint"])
+    # 协议验证
+    protocol_check = _validate_protocol(data["endpoint"])
 
     return {
         "status": "created",
@@ -121,24 +121,59 @@ def register_agent(project: str, data: dict, session) -> dict:
         "name": agent.name,
         "similarity": avg_sim if avg_sim else None,
         "closest_agent": closest_agent.name if closest_agent else None,
-        "endpoint_reachable": endpoint_ok,
+        "endpoint_reachable": protocol_check["ok"],
+        "protocol_check": protocol_check,
         "message": "Agent registered successfully."
-        if endpoint_ok
-        else f"Agent registered but endpoint unreachable: {data['endpoint']}",
+        if protocol_check["ok"]
+        else f"Agent registered but protocol check failed: {protocol_check.get('error', 'unknown')}",
     }
 
 
-def _ping_endpoint(endpoint: str) -> bool:
-    """Check if agent endpoint is reachable."""
+def _validate_protocol(endpoint: str) -> dict:
+    """Validate agent endpoint conforms to AgentForge Protocol.
+    Returns {"ok": true/false, "health": true/false, "run": true/false, "error": "..."}
+    """
+    import httpx
+    from urllib.parse import urlparse, urlunparse
+
+    result = {"ok": False, "health": False, "run": False, "error": None}
+    parsed = urlparse(endpoint.rstrip("/"))
+
+    # 1. Health check
     try:
-        import httpx
-        from urllib.parse import urlparse, urlunparse
-        parsed = urlparse(endpoint.rstrip("/"))
         health_url = urlunparse(parsed._replace(path="/health"))
         resp = httpx.get(health_url, timeout=5)
-        return resp.status_code == 200
-    except Exception:
-        return False
+        if resp.status_code == 200:
+            result["health"] = True
+    except Exception as e:
+        result["error"] = f"Health check failed: {e}"
+        return result
+
+    # 2. Protocol probe — send a test task, check response format
+    try:
+        run_url = endpoint.rstrip("/")
+        probe = {"task": "protocol probe — reply with {\"agent\":\"...\",\"result\":\"ok\"}", "context": None}
+        resp = httpx.post(run_url, json=probe, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict) and "agent" in data and "result" in data:
+                result["run"] = True
+            else:
+                result["error"] = f"Response missing 'agent' or 'result' fields: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}"
+        else:
+            result["error"] = f"/run returned {resp.status_code}"
+    except Exception as e:
+        result["error"] = f"Protocol probe failed: {e}"
+        return result
+
+    result["ok"] = result["health"] and result["run"]
+    return result
+
+
+def _ping_endpoint(endpoint: str) -> bool:
+    """Check if agent endpoint is reachable (kept for backward compat)."""
+    result = _validate_protocol(endpoint)
+    return result["ok"]
 
 
 # ── Match ───────────────────────────────────────────────

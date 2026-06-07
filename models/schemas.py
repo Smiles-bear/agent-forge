@@ -80,6 +80,7 @@ class AgentRegisterResponse(BaseModel):
     similarity: float | None = None
     closest_agent: str | None = None
     endpoint_reachable: bool | None = None
+    protocol_check: dict | None = None
     message: str
 
 
