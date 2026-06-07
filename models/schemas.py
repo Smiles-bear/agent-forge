@@ -203,3 +203,24 @@ class VerificationStatusResponse(BaseModel):
     completed_tests: int
     status: str  # pending | in_progress | completed
     results: list[VerificationStepResult]
+
+
+# --- Orchestration schemas ---
+
+class OrchestrateRequest(BaseModel):
+    task: str = Field(..., min_length=1, description="Complex task to decompose and execute")
+
+
+class SubTaskResult(BaseModel):
+    sub_task: str
+    agent_name: str | None = None
+    agent_id: int | None = None
+    status: str  # done | failed | no_match
+    result: str | None = None
+
+
+class OrchestrateResponse(BaseModel):
+    task: str
+    plan: list[str]  # decomposed sub-tasks
+    results: list[SubTaskResult]
+    summary: str

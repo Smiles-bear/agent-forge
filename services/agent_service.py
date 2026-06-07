@@ -418,3 +418,78 @@ def _agent_to_result(a: Agent) -> dict:
         "similarity": None,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
+
+
+# ── Orchestrate ─────────────────────────────────────────
+
+def orchestrate_task(project: str, task: str) -> dict:
+    """CEO orchestration: decompose task → match → execute → merge."""
+    import ollama, httpx
+
+    # 1. LLM 拆解任务
+    prompt = f"""You are a project manager. Break this task into 2-4 independent sub-tasks that can be executed by different agents.
+
+Task: {task}
+
+Available agent types: Code Reviewer (reviews code), Test Writer (writes tests), Backend Developer (APIs, databases), Frontend Developer (React, UI).
+
+Return a JSON array of sub-task strings. Keep each sub-task specific and actionable.
+Example: ["Design REST API for login", "Build login UI component", "Write tests for login flow"]
+Return ONLY the JSON array, no explanation."""
+
+    try:
+        resp = ollama.chat(model="qwen3:8b", messages=[{"role":"user","content":prompt}], stream=False)
+        content = resp["message"]["content"].strip()
+        if content.startswith("```"): content = content.split("\n",1)[1]
+        if content.endswith("```"): content = content.rsplit("```",1)[0]
+        plan = json.loads(content)
+        if not isinstance(plan, list): plan = [task]
+    except Exception as e:
+        logger.warning("Orchestrate decompose failed: %s, using raw task", e)
+        plan = [task]
+
+    logger.info("Orchestrate plan: %s", plan)
+
+    # 2. 为每个子任务 match + execute
+    session = SessionLocal()
+    results = []
+    try:
+        for sub_task in plan:
+            sub_result = {"sub_task": sub_task, "agent_name": None, "agent_id": None, "status": "no_match", "result": None}
+
+            # Match
+            matches = match_agent(sub_task, project, 1, session)
+            if not matches:
+                results.append(sub_result)
+                continue
+
+            best = matches[0]
+            sub_result["agent_name"] = best["name"]
+            sub_result["agent_id"] = best["agent_id"]
+
+            # Execute
+            try:
+                exec_result = execute_agent(best["agent_id"], sub_task, None, session)
+                if exec_result:
+                    sub_result["result"] = exec_result.get("result", str(exec_result))
+                    sub_result["status"] = "done"
+                else:
+                    sub_result["status"] = "failed"
+            except Exception as e:
+                sub_result["status"] = "failed"
+                sub_result["result"] = str(e)
+
+            results.append(sub_result)
+    finally:
+        session.close()
+
+    # 3. 生成摘要
+    done_count = sum(1 for r in results if r["status"] == "done")
+    summary = f"{done_count}/{len(results)} sub-tasks completed"
+
+    return {
+        "task": task,
+        "plan": plan,
+        "results": results,
+        "summary": summary,
+    }

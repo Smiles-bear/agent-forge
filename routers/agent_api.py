@@ -9,10 +9,12 @@ from models.schemas import (
     AgentListResponse, AgentDeleteResponse,
     AgentResult, AgentDetail,
     VerifyRequest, VerifyResponse, VerificationStatusResponse,
+    OrchestrateRequest, OrchestrateResponse,
 )
 from services.agent_service import (
     register_agent, match_agent, execute_agent,
     list_agents, get_agent, delete_agent, list_departments,
+    orchestrate_task,
 )
 from services.verification import (
     get_verification_status, clear_verification_results, run_verification,
@@ -202,3 +204,11 @@ async def get_verification(project: str, agent_id: int):
     if status is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return VerificationStatusResponse(**status)
+
+
+@router.post("/{project}/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate(project: str, data: OrchestrateRequest):
+    """CEO orchestration: decompose complex task → match → execute → merge."""
+    logger.info("Orchestrate request: %s", data.task[:80])
+    result = orchestrate_task(project, data.task)
+    return OrchestrateResponse(**result)
