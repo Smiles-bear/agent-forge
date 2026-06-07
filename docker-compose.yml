@@ -97,5 +97,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - registry
+
 volumes:
   pgdata:
