@@ -253,6 +253,7 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
                 merged.append({
                     "agent_id": c["agent"].id,
                     "name": c["agent"].name,
+                    "endpoint": c["agent"].endpoint,
                     "tech_stack": c["agent"].tech_stack or [],
                     "task_types": c["agent"].task_types or [],
                     "domains": c["agent"].domains or [],
@@ -280,6 +281,7 @@ def _llm_rerank(task: str, candidates: list[dict]) -> list[dict]:
         fallback.append({
             "agent_id": c["agent"].id,
             "name": c["agent"].name,
+            "endpoint": c["agent"].endpoint,
             "tech_stack": c["agent"].tech_stack or [],
             "task_types": c["agent"].task_types or [],
             "domains": c["agent"].domains or [],
@@ -422,74 +424,148 @@ def _agent_to_result(a: Agent) -> dict:
 
 # ── Orchestrate ─────────────────────────────────────────
 
-def orchestrate_task(project: str, task: str) -> dict:
-    """CEO orchestration: decompose task → match → execute → merge."""
-    import ollama, httpx
+import asyncio as _asyncio
 
-    # 1. LLM 拆解任务
-    prompt = f"""You are a project manager. Break this task into 2-4 independent sub-tasks that can be executed by different agents.
+async def orchestrate_task(project: str, task: str) -> dict:
+    """CEO orchestration: decompose → plan dependencies → parallel match+execute → merge."""
+    import ollama
+
+    # 1. LLM 拆解任务（结构化 JSON，含依赖和输出定义）
+    prompt = f"""You are a project manager. Break this task into 2-4 sub-tasks.
 
 Task: {task}
 
-Available agent types: Code Reviewer (reviews code), Test Writer (writes tests), Backend Developer (APIs, databases), Frontend Developer (React, UI).
+Available agent roles: backend (APIs, databases), frontend (React, UI), test (pytest), review (code review).
 
-Return a JSON array of sub-task strings. Keep each sub-task specific and actionable.
-Example: ["Design REST API for login", "Build login UI component", "Write tests for login flow"]
-Return ONLY the JSON array, no explanation."""
+Return a JSON array. Each sub-task object:
+- "task": string — specific, actionable description including what OUTPUT it must produce
+- "role": string — one of: backend, frontend, test, review
+- "depends_on": array of indices — which previous sub-tasks this one needs output from (empty array = independent, can run parallel)
+
+Rules:
+- Independent sub-tasks should have empty depends_on
+- If sub-task B needs output from sub-task A, add A's index to B's depends_on
+- Each sub-task must be assigned to the correct role
+- Max 4 sub-tasks
+
+Example:
+[{{"task":"Design REST API spec with request/response schemas","role":"backend","depends_on":[]}},
+ {{"task":"Build login UI based on the API spec","role":"frontend","depends_on":[0]}},
+ {{"task":"Write pytest tests for the login API","role":"test","depends_on":[0]}}]
+
+Return ONLY the JSON array, no markdown, no explanation."""
 
     try:
         resp = ollama.chat(model="qwen3:8b", messages=[{"role":"user","content":prompt}], stream=False)
         content = resp["message"]["content"].strip()
         if content.startswith("```"): content = content.split("\n",1)[1]
         if content.endswith("```"): content = content.rsplit("```",1)[0]
-        plan = json.loads(content)
-        if not isinstance(plan, list): plan = [task]
+        items = json.loads(content.strip())
+        if not isinstance(items, list): items = [{"task": task, "role": "backend", "depends_on": []}]
     except Exception as e:
         logger.warning("Orchestrate decompose failed: %s, using raw task", e)
-        plan = [task]
+        items = [{"task": task, "role": "backend", "depends_on": []}]
 
-    logger.info("Orchestrate plan: %s", plan)
+    logger.info("Orchestrate plan: %s", [i["task"][:60] for i in items])
 
-    # 2. 为每个子任务 match + execute
-    session = SessionLocal()
-    results = []
+    # 2. 拓扑排序 → 分组并行执行
     try:
-        for sub_task in plan:
-            sub_result = {"sub_task": sub_task, "agent_name": None, "agent_id": None, "status": "no_match", "result": None}
+        return await _run_orchestration(project, items)
+    except Exception as e:
+        logger.error("Orchestration failed: %s", e)
+        return {"task": task, "plan": [i["task"] for i in items], "results": [], "summary": f"Orchestration error: {e}"}
 
-            # Match
-            matches = match_agent(sub_task, project, 1, session)
-            if not matches:
-                results.append(sub_result)
-                continue
 
-            best = matches[0]
-            sub_result["agent_name"] = best["name"]
-            sub_result["agent_id"] = best["agent_id"]
+async def _run_orchestration(project: str, items: list[dict]) -> dict:
+    """Async: match all sub-tasks, then execute in dependency order with context passing."""
+    import httpx
 
-            # Execute
+    # Phase 1: Match all sub-tasks (parallel)
+    match_results = {}
+    for i, item in enumerate(items):
+        s = SessionLocal()
+        try:
+            matches = match_agent(item["task"], project, 1, s)
+            if matches and matches[0]["name"].lower().replace(" ","-") != "ceo-agent":
+                match_results[i] = matches[0]
+        except Exception as e:
+            logger.warning("Match failed for sub-task %d: %s", i, e)
+        finally:
+            s.close()
+
+    # Phase 2: Execute in dependency order, with context passing
+    outputs = {}  # index → result text
+    results = []
+
+    # Topological: find levels of independent tasks
+    remaining = set(range(len(items)))
+    while remaining:
+        # Find tasks whose dependencies are all satisfied
+        ready = [idx for idx in remaining
+                 if all(d in outputs for d in items[idx].get("depends_on", []))]
+
+        if not ready:
+            # Circular dependency or all remaining depend on each other — execute all
+            ready = list(remaining)
+
+        # Build context for each ready task
+        tasks_to_run = []
+        for idx in ready:
+            ctx = None
+            deps = items[idx].get("depends_on", [])
+            if deps:
+                ctx_parts = []
+                for d in deps:
+                    if d in outputs:
+                        ctx_parts.append(f"[Output from step {d}]:\n{outputs[d][:2000]}")
+                if ctx_parts:
+                    ctx = {"previous_outputs": "\n\n".join(ctx_parts)}
+
+            agent = match_results.get(idx)
+            if agent:
+                tasks_to_run.append((idx, agent, ctx))
+
+        # Execute in parallel
+        async def _exec_one(idx, agent, ctx):
             try:
-                exec_result = execute_agent(best["agent_id"], sub_task, None, session)
-                if exec_result:
-                    sub_result["result"] = exec_result.get("result", str(exec_result))
-                    sub_result["status"] = "done"
-                else:
-                    sub_result["status"] = "failed"
+                async with httpx.AsyncClient(timeout=300) as client:
+                    payload = {"task": items[idx]["task"]}
+                    if ctx:
+                        payload["context"] = ctx
+                    resp = await client.post(agent["endpoint"], json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return idx, data.get("result", resp.text), "done"
             except Exception as e:
-                sub_result["status"] = "failed"
-                sub_result["result"] = str(e)
+                return idx, str(e), "failed"
 
-            results.append(sub_result)
-    finally:
-        session.close()
+        batch_results = await _asyncio.gather(*[_exec_one(i, a, c) for i, a, c in tasks_to_run])
 
-    # 3. 生成摘要
-    done_count = sum(1 for r in results if r["status"] == "done")
-    summary = f"{done_count}/{len(results)} sub-tasks completed"
+        for idx, result_text, status in batch_results:
+            outputs[idx] = result_text
+            results.append({"idx": idx, "status": status, "result": result_text})
+            remaining.discard(idx)
 
+    # Sort results by original index
+    results.sort(key=lambda r: r["idx"])
+
+    # Phase 3: Build response
+    final_results = []
+    for i, item in enumerate(items):
+        agent = match_results.get(i)
+        r = results[i] if i < len(results) else {"status": "no_match", "result": None}
+        final_results.append({
+            "sub_task": item["task"],
+            "agent_name": agent["name"] if agent else None,
+            "agent_id": agent["agent_id"] if agent else None,
+            "status": r.get("status", "no_match"),
+            "result": r.get("result"),
+        })
+
+    done_count = sum(1 for r in final_results if r["status"] == "done")
     return {
-        "task": task,
-        "plan": plan,
-        "results": results,
-        "summary": summary,
+        "task": items[0].get("task", "") if items else "",
+        "plan": [i["task"] for i in items],
+        "results": final_results,
+        "summary": f"{done_count}/{len(items)} sub-tasks completed",
     }

@@ -210,5 +210,5 @@ async def get_verification(project: str, agent_id: int):
 async def orchestrate(project: str, data: OrchestrateRequest):
     """CEO orchestration: decompose complex task → match → execute → merge."""
     logger.info("Orchestrate request: %s", data.task[:80])
-    result = orchestrate_task(project, data.task)
+    result = await orchestrate_task(project, data.task)
     return OrchestrateResponse(**result)
