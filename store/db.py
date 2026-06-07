@@ -58,6 +58,7 @@ class Agent(Base):
 
     # 运行时指标
     reliability_score = Column(Float, nullable=True, default=None)
+    verified_at = Column(DateTime, nullable=True, comment="Last verification timestamp")
     avg_latency_ms = Column(Integer, default=0)
     total_calls = Column(Integer, default=0)
 

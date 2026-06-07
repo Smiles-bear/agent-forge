@@ -112,14 +112,33 @@ def register_agent(project: str, data: dict, session) -> dict:
     session.commit()
     session.refresh(agent)
 
+    # 检查 endpoint 连通性
+    endpoint_ok = _ping_endpoint(data["endpoint"])
+
     return {
         "status": "created",
         "agent_id": agent.id,
         "name": agent.name,
         "similarity": avg_sim if avg_sim else None,
         "closest_agent": closest_agent.name if closest_agent else None,
-        "message": "Agent registered successfully.",
+        "endpoint_reachable": endpoint_ok,
+        "message": "Agent registered successfully."
+        if endpoint_ok
+        else f"Agent registered but endpoint unreachable: {data['endpoint']}",
     }
+
+
+def _ping_endpoint(endpoint: str) -> bool:
+    """Check if agent endpoint is reachable."""
+    try:
+        import httpx
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(endpoint.rstrip("/"))
+        health_url = urlunparse(parsed._replace(path="/health"))
+        resp = httpx.get(health_url, timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
 
 
 # ── Match ───────────────────────────────────────────────

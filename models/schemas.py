@@ -79,6 +79,7 @@ class AgentRegisterResponse(BaseModel):
     name: str
     similarity: float | None = None
     closest_agent: str | None = None
+    endpoint_reachable: bool | None = None
     message: str
 
 
@@ -137,6 +138,7 @@ class AgentMatchResponse(BaseModel):
     task: str
     project: str
     matches: list[AgentMatchResult]
+    hint: str | None = None
 
 
 class AgentExecuteRequest(BaseModel):

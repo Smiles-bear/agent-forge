@@ -55,6 +55,18 @@ async def match(project: str, data: AgentMatchRequest):
     session = SessionLocal()
     try:
         matches = match_agent(data.task, project, data.top_k, session)
+
+        # 零匹配或低质量匹配时给用户提示
+        hint = None
+        agent_count = session.query(Agent).filter(Agent.project == project).count()
+        if not matches:
+            if agent_count == 0:
+                hint = f"No agents registered in project '{project}'. Register an agent first."
+            else:
+                hint = f"No agents matched your task. Try rephrasing — be more specific about tech stack (e.g. 'python', 'react') and task type (e.g. 'review', 'develop'). {agent_count} agents available in this project."
+        elif all(m.get("relevance_score", 0) < 0.5 for m in matches):
+            hint = f"All matches have low confidence (<0.5). Your task may be outside the capabilities of available agents. Try breaking it into smaller steps or registering a specialized agent."
+
         return AgentMatchResponse(
             task=data.task,
             project=project,
@@ -82,6 +94,7 @@ async def match(project: str, data: AgentMatchRequest):
                 )
                 for m in matches
             ],
+            hint=hint,
         )
     finally:
         session.close()

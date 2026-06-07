@@ -5,6 +5,7 @@ import subprocess
 import os
 import asyncio
 import re
+from datetime import datetime, timezone
 import httpx
 from sqlalchemy import text
 from store.db import SessionLocal, Agent, VerificationResult
@@ -52,6 +53,7 @@ async def run_verification(agent_id: int, config: dict, endpoint: str):
         agent = session.query(Agent).filter(Agent.id == agent_id).first()
         if agent:
             agent.reliability_score = reliability
+            agent.verified_at = datetime.now(timezone.utc)
             if agent.verification_config:
                 try:
                     vconfig = json.loads(agent.verification_config) if isinstance(agent.verification_config, str) else agent.verification_config
