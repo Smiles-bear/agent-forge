@@ -62,6 +62,10 @@ class Agent(Base):
     avg_latency_ms = Column(Integer, default=0)
     total_calls = Column(Integer, default=0)
 
+    # 健康监控
+    last_health_ok = Column(DateTime, nullable=True, comment="Last successful health check")
+    consecutive_failures = Column(Integer, default=0, comment="Consecutive failed health checks")
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

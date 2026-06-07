@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from store.db import init_db
@@ -13,6 +15,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _health_monitor():
+    """Background task: ping all agent health endpoints every 60s."""
+    import httpx
+    from store.db import SessionLocal, Agent
+
+    await asyncio.sleep(30)  # Wait for initial registrations
+    while True:
+        try:
+            session = SessionLocal()
+            agents = session.query(Agent).all()
+            for agent in agents:
+                try:
+                    health_url = agent.endpoint.rstrip("/").replace("/run", "/health")
+                    resp = httpx.get(health_url, timeout=5)
+                    if resp.status_code == 200:
+                        agent.last_health_ok = datetime.now(timezone.utc)
+                        agent.consecutive_failures = 0
+                    else:
+                        agent.consecutive_failures = (agent.consecutive_failures or 0) + 1
+                except Exception:
+                    agent.consecutive_failures = (agent.consecutive_failures or 0) + 1
+            session.commit()
+            session.close()
+        except Exception as e:
+            logger.warning("Health monitor error: %s", e)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -20,7 +50,9 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized")
     except Exception as e:
         logger.warning("DB init skipped: %s", e)
+    monitor_task = asyncio.create_task(_health_monitor())
     yield
+    monitor_task.cancel()
 
 
 app = FastAPI(
