@@ -1,17 +1,21 @@
 import json
 import logging
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
-from store.db import SessionLocal
+from store.db import SessionLocal, Agent
 from models.schemas import (
     AgentRegisterRequest, AgentRegisterResponse,
     AgentMatchRequest, AgentMatchResponse, AgentMatchResult,
     AgentExecuteRequest, AgentExecuteResponse,
     AgentListResponse, AgentDeleteResponse,
     AgentResult, AgentDetail,
+    VerifyRequest, VerifyResponse, VerificationStatusResponse,
 )
 from services.agent_service import (
     register_agent, match_agent, execute_agent,
     list_agents, get_agent, delete_agent, list_departments,
+)
+from services.verification import (
+    get_verification_status, clear_verification_results, run_verification,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,3 +145,47 @@ async def departments_endpoint(project: str):
         return {"project": project, "departments": deps}
     finally:
         session.close()
+
+
+@router.post("/{project}/agents/{agent_id}/verify", response_model=VerifyResponse)
+async def verify_agent(project: str, agent_id: int,
+                       data: VerifyRequest | None = None,
+                       background_tasks: BackgroundTasks = None):
+    """Async re-verification of an agent."""
+    session = SessionLocal()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Use provided test_cases or existing verification_config
+        vconfig = data.test_cases if data and data.test_cases else None
+        if not vconfig and agent.verification_config:
+            try:
+                vconfig = json.loads(agent.verification_config) if isinstance(agent.verification_config, str) else agent.verification_config
+            except Exception:
+                pass
+        if not vconfig or not vconfig.get("test_cases"):
+            raise HTTPException(status_code=400, detail="No test cases available for verification")
+
+        # Clear old results
+        clear_verification_results(agent_id)
+
+        # Trigger async verification
+        background_tasks.add_task(run_verification, agent_id, vconfig, agent.endpoint)
+        logger.info("Re-verification scheduled for agent %d", agent_id)
+
+        return VerifyResponse(status="scheduled", agent_id=agent_id,
+                              message="Verification started")
+    finally:
+        session.close()
+
+
+@router.get("/{project}/agents/{agent_id}/verification",
+            response_model=VerificationStatusResponse)
+async def get_verification(project: str, agent_id: int):
+    """Query agent verification progress and results."""
+    status = get_verification_status(agent_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return VerificationStatusResponse(**status)
