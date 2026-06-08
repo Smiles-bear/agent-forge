@@ -224,3 +224,16 @@ class OrchestrateResponse(BaseModel):
     plan: list[str]  # decomposed sub-tasks
     results: list[SubTaskResult]
     summary: str
+
+
+# --- Feedback schemas ---
+
+class FeedbackRequest(BaseModel):
+    rating: str = Field(..., pattern="^(up|down)$")
+
+
+class FeedbackResponse(BaseModel):
+    agent_id: int
+    positive: int
+    negative: int
+    reliability_score: float | None

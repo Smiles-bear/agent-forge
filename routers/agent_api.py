@@ -10,6 +10,7 @@ from models.schemas import (
     AgentResult, AgentDetail,
     VerifyRequest, VerifyResponse, VerificationStatusResponse,
     OrchestrateRequest, OrchestrateResponse,
+    FeedbackRequest, FeedbackResponse,
 )
 from services.agent_service import (
     register_agent, match_agent, execute_agent,
@@ -212,3 +213,36 @@ async def orchestrate(project: str, data: OrchestrateRequest):
     logger.info("Orchestrate request: %s", data.task[:80])
     result = await orchestrate_task(project, data.task)
     return OrchestrateResponse(**result)
+
+
+@router.post("/{project}/agents/{agent_id}/feedback", response_model=FeedbackResponse)
+async def feedback(project: str, agent_id: int, data: FeedbackRequest):
+    """Rate an agent's execution result. Updates reliability_score."""
+    session = SessionLocal()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if data.rating == "up":
+            agent.positive_feedback = (agent.positive_feedback or 0) + 1
+        else:
+            agent.negative_feedback = (agent.negative_feedback or 0) + 1
+
+        # Update reliability: blend verification score with feedback ratio
+        pos = agent.positive_feedback or 0
+        neg = agent.negative_feedback or 0
+        total = pos + neg
+        if total > 0:
+            feedback_score = pos / total
+            # Blend: 70% verification + 30% feedback
+            if agent.reliability_score is not None:
+                agent.reliability_score = round(0.7 * agent.reliability_score + 0.3 * feedback_score, 4)
+            else:
+                agent.reliability_score = round(feedback_score, 4)
+
+        session.commit()
+        return FeedbackResponse(agent_id=agent_id, positive=pos, negative=neg,
+                                reliability_score=agent.reliability_score)
+    finally:
+        session.close()

@@ -66,6 +66,10 @@ class Agent(Base):
     last_health_ok = Column(DateTime, nullable=True, comment="Last successful health check")
     consecutive_failures = Column(Integer, default=0, comment="Consecutive failed health checks")
 
+    # 运行时反馈
+    positive_feedback = Column(Integer, default=0, comment="User thumbs up count")
+    negative_feedback = Column(Integer, default=0, comment="User thumbs down count")
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

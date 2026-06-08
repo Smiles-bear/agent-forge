@@ -189,69 +189,27 @@ def _extract_code(output: str) -> str:
 
 
 async def _llm_rubric(output: str, task: str, dimensions: dict) -> float:
-    """LLM 按量规打分。如果 RUBRIC_DOUBLE_CHECK，双评取低分。"""
-    score1 = await _rubric_once(output, task, dimensions)
-    if RUBRIC_DOUBLE_CHECK:
-        score2 = await _rubric_once(output, task, dimensions)
-        return round(min(score1, score2), 4)
-    return score1
+    """Multi-judge rubric scoring. Uses all available judges, takes the minimum score."""
+    from services.judge import get_judges
 
+    loop = asyncio.get_event_loop()
+    judges = get_judges()
 
-async def _rubric_once(output: str, task: str, dimensions: dict) -> float:
-    """单次 LLM 量规评分。"""
-    dim_text = "\n".join([f"- {name}: {desc}" for name, desc in dimensions.items()])
+    async def _score_one(judge):
+        return await loop.run_in_executor(None, judge.score, output, task, dimensions)
 
-    prompt = f"""You are a strict code review grader. Your job is to find problems, not praise.
+    scores = []
+    for j in judges:
+        try:
+            s = await asyncio.wait_for(_score_one(j), timeout=VERIFICATION_TIMEOUT)
+            scores.append(s)
+        except Exception as e:
+            logger.warning("Judge %s failed: %s", j.name, e)
 
-Task: {task}
-
-Scoring dimensions:
-{dim_text}
-
-Agent response:
----
-{output[:2000]}
----
-
-Score each dimension from 1-5. Return ONLY a JSON object, no explanation.
-Format: {{"accuracy": 4, "completeness": 3, "actionability": 5}}
-Give the minimum score of 1 unless you are certain it is perfect."""
-
-    try:
-        import ollama
-
-        loop = asyncio.get_event_loop()
-        resp = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                lambda: ollama.chat(
-                    model=RUBRIC_MODEL,
-                    messages=[{"role": "user", "content": prompt}],
-                    stream=False,
-                ),
-            ),
-            timeout=VERIFICATION_TIMEOUT,
-        )
-        content = resp["message"]["content"].strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            if len(lines) > 1 and lines[-1].strip() == "```":
-                content = "\n".join(lines[1:-1])
-            else:
-                content = "\n".join(lines[1:])
-        scores = json.loads(content)
-
-        if not isinstance(scores, dict):
-            return 0.0
-
-        normalized = []
-        for name in dimensions.keys():
-            raw = scores.get(name, 1)
-            normalized.append(max(0.0, min(1.0, (raw - 1) / 4.0)))
-        return round(sum(normalized) / len(normalized), 4) if normalized else 0.0
-    except Exception as e:
-        logger.warning("Rubric scoring failed: %s", e)
+    if not scores:
         return 0.5
+    # Take minimum across all judges (strictest)
+    return round(min(scores), 4)
 
 
 def _save_result(session, agent_id: int, test_index: int,
