@@ -21,5 +21,11 @@ export function getSkills() { return api.get(`/${project.value}/skills`).then(r 
 export function searchSkills(q) { return api.get(`/${project.value}/skills/search`, { params: { q } }).then(r => r.data) }
 export function uploadSkill(content) { return api.post(`/${project.value}/skills/upload`, content, { headers: { 'Content-Type': 'text/plain' } }).then(r => r.data) }
 
+// Orchestrate
+export function orchestrateTask(task) { return api.post(`/${project.value}/orchestrate`, { task }).then(r => r.data) }
+
+// Feedback
+export function sendFeedback(id, rating) { return api.post(`/${project.value}/agents/${id}/feedback`, { rating }).then(r => r.data) }
+
 // Health
 export function getProjectHealth() { return api.get(`/${project.value}/health`).then(r => r.data) }
